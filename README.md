@@ -51,6 +51,7 @@ troupeforge-client/troupeforge-chat.ps1   # PowerShell
 User-facing guides live under [`docs/`](docs):
 
 - [docs/getting-started.md](docs/getting-started.md) — build, configure, run, first chat request
+- [docs/agent-architecture.md](docs/agent-architecture.md) — how agents are defined, composed with personas, and orchestrated
 - [docs/modules.md](docs/modules.md) — what each Gradle module contains
 - [docs/contributing.md](docs/contributing.md) — conventions and how to add agents, personas, tools, providers
 
