@@ -1,0 +1,76 @@
+{
+  "id": "architecture-review",
+  "version": {
+    "major": 1,
+    "minor": 0
+  },
+  "name": "Architecture Review Contract",
+  "description": "Analyze project architecture and produce improvement plans",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "scope": {
+        "type": "string",
+        "description": "What to analyze — module, package, or full project"
+      },
+      "focus": {
+        "type": "string",
+        "description": "Optional focus area: security, performance, maintainability"
+      }
+    },
+    "required": [
+      "scope"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "summary": {
+        "type": "string",
+        "description": "High-level summary of the architecture review findings"
+      },
+      "findings": {
+        "type": "array",
+        "description": "List of individual findings from the review",
+        "items": {
+          "type": "object",
+          "properties": {
+            "area": {
+              "type": "string",
+              "description": "The area or component where the finding applies"
+            },
+            "finding": {
+              "type": "string",
+              "description": "Description of what was observed"
+            },
+            "priority": {
+              "type": "string",
+              "description": "Priority level: critical, high, medium, low"
+            },
+            "recommendation": {
+              "type": "string",
+              "description": "Suggested action to address the finding"
+            }
+          }
+        }
+      }
+    },
+    "required": [
+      "summary",
+      "findings"
+    ]
+  },
+  "exampleResponse": {
+    "summary": "The module structure is well-organized but has coupling issues between the service and persistence layers.",
+    "findings": [
+      {
+        "area": "service-layer",
+        "finding": "Direct database access from service classes bypasses the repository pattern",
+        "priority": "high",
+        "recommendation": "Introduce repository interfaces and route all data access through them"
+      }
+    ]
+  },
+  "promptInstruction": "Analyze the specified scope and produce structured findings with recommendations.",
+  "metadata": {}
+}

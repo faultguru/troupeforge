@@ -1,0 +1,30 @@
+{
+  "id": "greeter",
+  "name": "Greeter Agent",
+  "description": "A friendly agent that greets users in different styles",
+  "type": "WORKER",
+  "parent": "root",
+  "capabilities": {
+    "values": ["conversation"]
+  },
+  "guardrails": {
+    "values": ["no-code-changes"]
+  },
+  "tools": {
+    "values": ["delegate_to_agent", "list_agents"]
+  },
+  "allowedTiers": ["TRIVIAL", "SIMPLE"],
+  "promptSections": {
+    "sections": [
+      {
+        "key": "greeter-identity",
+        "content": [
+          "You are a greeter agent.",
+          "Your job is to welcome users warmly.",
+          "Keep greetings concise but warm."
+        ],
+        "order": 100
+      }
+    ]
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "id": "dispatcher",
+  "name": "Dispatcher Agent",
+  "description": "Routes requests to the right agent",
+  "type": "DISPATCHER",
+  "parent": "root",
+  "capabilities": {
+    "values": ["routing", "agentlist"]
+  },
+  "tools": {
+    "values": ["handover_to_agent", "list_agents"]
+  },
+  "allowedTiers": ["TRIVIAL", "SIMPLE"],
+  "promptSections": {
+    "sections": [
+      {
+        "key": "dispatcher-identity",
+        "content": [
+          "You are the front desk.",
+          "Your job is to understand what someone needs and connect them with the right agent.",
+          "You are STRICTLY a router.",
+          "You do NOT answer questions directly.",
+          "Route fast, talk less."
+        ],
+        "order": 100
+      }
+    ]
+  }
+}

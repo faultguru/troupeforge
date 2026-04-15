@@ -1,0 +1,49 @@
+{
+  "id": "web-search",
+  "version": {
+    "major": 1,
+    "minor": 0
+  },
+  "name": "Web Search Contract",
+  "description": "Perform a web search and return results",
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "results": {
+        "type": "array",
+        "description": "List of search results matching the query",
+        "items": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string",
+              "description": "Title of the search result page"
+            },
+            "url": {
+              "type": "string",
+              "description": "URL of the search result"
+            },
+            "snippet": {
+              "type": "string",
+              "description": "Brief excerpt from the page content"
+            }
+          }
+        }
+      }
+    },
+    "required": [
+      "results"
+    ]
+  },
+  "exampleResponse": {
+    "results": [
+      {
+        "title": "Introduction to Machine Learning",
+        "url": "https://example.com/ml-intro",
+        "snippet": "A comprehensive guide to getting started with machine learning concepts and algorithms."
+      }
+    ]
+  },
+  "promptInstruction": "Search the web for the given query and return results.",
+  "metadata": {}
+}

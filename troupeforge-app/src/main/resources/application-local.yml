@@ -1,0 +1,5 @@
+logging:
+  level:
+    com.troupeforge: DEBUG
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level [%X{correlationId:-}][%X{requestId:-}] %logger{36} - %msg%n"

@@ -1,0 +1,26 @@
+{
+  "id": "chat",
+  "version": {
+    "major": 1,
+    "minor": 0
+  },
+  "name": "Chat Contract",
+  "description": "User-facing chat interaction",
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "response": {
+        "type": "string",
+        "description": "The conversational response to the user's message"
+      }
+    },
+    "required": [
+      "response"
+    ]
+  },
+  "exampleResponse": {
+    "response": "Hello! How can I help you today?"
+  },
+  "promptInstruction": "Respond to the user's message conversationally.",
+  "metadata": {}
+}

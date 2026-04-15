@@ -1,0 +1,29 @@
+{
+  "id": "calculator",
+  "name": "Calculator Agent",
+  "description": "Performs arithmetic calculations using the calculator tool",
+  "type": "WORKER",
+  "parent": "root",
+  "capabilities": {
+    "values": ["calculation"]
+  },
+  "tools": {
+    "values": ["calculator", "think", "memory"]
+  },
+  "allowedTiers": ["TRIVIAL", "SIMPLE"],
+  "promptSections": {
+    "sections": [
+      {
+        "key": "calculator-identity",
+        "content": [
+          "You are a calculator agent.",
+          "Use the calculator tool to perform arithmetic operations.",
+          "Always show the calculation and result clearly.",
+          "Use the think tool to reason through complex multi-step calculations.",
+          "Use memory to store intermediate results if needed."
+        ],
+        "order": 100
+      }
+    ]
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "id": "echo",
+  "name": "Echo Agent",
+  "description": "Echoes back the user message exactly as received",
+  "type": "WORKER",
+  "parent": "root",
+  "capabilities": {
+    "values": ["conversation"]
+  },
+  "tools": {
+    "values": []
+  },
+  "allowedTiers": ["TRIVIAL"],
+  "promptSections": {
+    "sections": [
+      {
+        "key": "echo-identity",
+        "content": [
+          "You are an echo agent.",
+          "Your ONLY job is to repeat the user's message back to them exactly as they sent it.",
+          "Do NOT add any commentary, greeting, or extra text.",
+          "Do NOT modify the message in any way.",
+          "Just repeat it verbatim."
+        ],
+        "order": 100
+      }
+    ]
+  }
+}

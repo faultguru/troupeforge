@@ -1,0 +1,21 @@
+{
+  "id": "claude-oauth",
+  "name": "Claude OAuth",
+  "type": "oauth",
+  "baseUrl": "https://api.anthropic.com/v1",
+  "auth": {
+    "method": "oauth",
+    "credentialPaths": [
+      "~/.troupeforge/.credentials.json",
+      "~/.claude/.credentials.json"
+    ]
+  },
+  "supportedModels": [
+    "claude-haiku-4-5-20251001",
+    "claude-sonnet-4-6",
+    "claude-opus-4-6"
+  ],
+  "headers": {
+    "anthropic-version": "2023-06-01"
+  }
+}

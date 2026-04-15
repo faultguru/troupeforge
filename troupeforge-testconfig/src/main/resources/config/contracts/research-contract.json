@@ -1,0 +1,66 @@
+{
+  "id": "research",
+  "version": {
+    "major": 1,
+    "minor": 0
+  },
+  "name": "Research Contract",
+  "description": "Investigate a topic and return structured findings",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "topic": {
+        "type": "string",
+        "description": "The topic to research"
+      },
+      "context": {
+        "type": "string",
+        "description": "Additional context or constraints for the research"
+      }
+    },
+    "required": [
+      "topic"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "summary": {
+        "type": "string",
+        "description": "Brief summary of the research findings"
+      },
+      "findings": {
+        "type": "array",
+        "description": "Key findings from the research",
+        "items": {
+          "type": "string"
+        }
+      },
+      "recommendations": {
+        "type": "array",
+        "description": "Actionable recommendations based on the findings",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "summary",
+      "findings"
+    ]
+  },
+  "exampleResponse": {
+    "summary": "React Server Components improve initial page load by rendering on the server, reducing client-side JavaScript.",
+    "findings": [
+      "Server Components eliminate the need for client-side hydration of static content",
+      "Bundle size is reduced since server-only dependencies stay on the server",
+      "Data fetching moves closer to the data source, reducing waterfall requests"
+    ],
+    "recommendations": [
+      "Use Server Components for data-heavy pages with minimal interactivity",
+      "Keep interactive elements as Client Components composed within Server Components"
+    ]
+  },
+  "promptInstruction": "Research the topic thoroughly and return structured findings.",
+  "metadata": {}
+}

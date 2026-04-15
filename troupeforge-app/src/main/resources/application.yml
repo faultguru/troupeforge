@@ -1,0 +1,15 @@
+spring:
+  application:
+    name: troupeforge
+
+server:
+  port: 8080
+
+troupeforge:
+  llm:
+    base-url: https://api.anthropic.com
+  bucket:
+    auto-load:
+      enabled: true
+      config-path: troupeforge-testconfig/src/main/resources/config
+      org-id: default

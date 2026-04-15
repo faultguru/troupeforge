@@ -1,0 +1,35 @@
+{
+  "id": "mock-agent",
+  "name": "Mock Agent",
+  "description": "Test agent for verifying tool execution and file operations",
+  "type": "WORKER",
+  "parent": "root",
+  "tools": {
+    "action": "INHERIT",
+    "values": [
+      "head_file",
+      "list_files",
+      "read_file"
+    ]
+  },
+  "allowedTiers": [
+    "TRIVIAL",
+    "SIMPLE",
+    "STANDARD"
+  ],
+  "promptSections": {
+    "action": "INHERIT",
+    "sections": [
+      {
+        "key": "file-operations",
+        "content": [
+          "You are a file reading specialist.",
+          "Use the available file tools to read, list, and inspect files.",
+          "Always report file paths relative to the working directory.",
+          "Never attempt to modify files — you are read-only."
+        ],
+        "order": 10
+      }
+    ]
+  }
+}
