@@ -30,10 +30,10 @@ A TroupeForge agent is **three layers fused at runtime**:
 ```
 
 - **`AgentDefinition`** — what the agent *is*. Defines capabilities, tools, guardrails, prompt sections, and what persona slots it exposes. Lives in `{agent-id}-agent.json`.
-- **`PersonaDefinition`** — what the agent *sounds like*. Fills the agent's persona slots with voice / strategy text, sets tone + verbosity, and declares which model tiers this persona may use. Lives in `personas/{persona-id}-persona.json` under the agent's folder.
+- **`PersonaDefinition`** — what the agent *sounds like* and how it approaches work. Fills the agent's persona slots with voice / strategy text, sets tone + verbosity, and declares which model tiers this persona may use. Lives in `personas/{persona-id}-persona.json` under the agent's folder.
 - **`AgentProfile`** — the runtime object, keyed by `AgentProfileId(agentId, personaId)`. Built by the engine from a resolved agent plus a persona. Every running agent is a profile; persona is **not optional**.
 
-An agent without a persona cannot run. The same agent with different personas is a different `AgentProfileId` — `greeter:bond` and `greeter:lord` are distinct runtime entities that share the same tools and guardrails but greet you very differently.
+An agent without a persona cannot run. The same agent with different personas is a different `AgentProfileId` — `researcher:guru` and `researcher:nick` share the same tools, capabilities, and guardrails but reason about problems very differently. One might be your deep-investigation persona, the other your fast-turnaround persona.
 
 ## Defining an agent
 
@@ -41,42 +41,41 @@ Agents live in a directory tree that mirrors the inheritance hierarchy:
 
 ```
 config/agents/
-├── root-agent.json              # the ROOT agent (AgentId.ROOT)
-├── greeter/
-│   ├── greeter-agent.json       # parent: root
-│   └── personas/
-│       ├── bond-persona.json
-│       ├── lord-persona.json
-│       └── simon-persona.json
+├── root-agent.json                    # the ROOT agent (AgentId.ROOT)
 ├── researcher/
-│   ├── researcher-agent.json    # parent: root
+│   ├── researcher-agent.json          # parent: root — investigation & orchestration
 │   └── personas/
-│       ├── guru-persona.json
-│       └── nick-persona.json
+│       ├── guru-persona.json          # deep, strategic, plans three steps ahead
+│       └── nick-persona.json          # fast, scrappy, trims scope aggressively
+├── architect/
+│   ├── architect-agent.json           # parent: root — design & review
+│   └── personas/
+│       ├── martin-persona.json
+│       └── sofia-persona.json
 └── ...
 ```
 
-A minimal agent definition (from `troupeforge-testconfig`'s `greeter`):
+A realistic agent definition (the `researcher` from `troupeforge-testconfig`):
 
 ```json
 {
-  "id": "greeter",
-  "name": "Greeter Agent",
-  "description": "A friendly agent that greets users in different styles",
+  "id": "researcher",
+  "name": "Researcher Agent",
+  "description": "Investigates, researches, and orchestrates work across the agent network",
   "type": "WORKER",
   "parent": "root",
-  "capabilities": { "values": ["conversation"] },
+  "capabilities": { "values": ["planning", "research"] },
   "guardrails":   { "values": ["no-code-changes"] },
   "tools":        { "values": ["delegate_to_agent", "list_agents"] },
-  "allowedTiers": ["TRIVIAL", "SIMPLE"],
+  "contractCapabilities": { "values": ["research", "web-search"] },
+  "allowedTiers": ["SIMPLE", "STANDARD", "ADVANCED", "COMPLEX", "EXPERT"],
   "promptSections": {
     "sections": [
       {
-        "key": "greeter-identity",
+        "key": "researcher-identity",
         "content": [
-          "You are a greeter agent.",
-          "Your job is to welcome users warmly.",
-          "Keep greetings concise but warm."
+          "You are a researcher and orchestrator.",
+          "You receive objectives and drive them to completion by investigating, understanding the problem space, breaking work into tasks, and leveraging the agent network."
         ],
         "order": 100
       }
@@ -84,6 +83,8 @@ A minimal agent definition (from `troupeforge-testconfig`'s `greeter`):
   }
 }
 ```
+
+Notice how this agent is a pure orchestrator — its tools list is just `delegate_to_agent` and `list_agents`. It cannot touch code or files directly; the `no-code-changes` guardrail reinforces that. The researcher advertises two contract capabilities (`research` and `web-search`), which is how other agents on the bus discover it by role rather than by id.
 
 Points worth knowing:
 
@@ -95,35 +96,42 @@ Points worth knowing:
 
 ## Defining a persona
 
-A persona lives under its agent's `personas/` folder. Example (`greeter/personas/bond-persona.json`):
+A persona lives under its agent's `personas/` folder. Example (`researcher/personas/guru-persona.json`):
 
 ```json
 {
-  "id": "bond",
-  "displayName": "James Bond",
+  "id": "guru",
+  "displayName": "Guru",
+  "description": "The mastermind. Works at the epic level — researches complex objectives, orchestrates the agent network.",
   "style": {
-    "tone": "suave, confident, dangerously charming, dry wit",
-    "verbosity": "CONCISE",
-    "emoji": "🍸"
+    "tone": "calm, authoritative, strategic, sees the whole board",
+    "verbosity": "BALANCED"
   },
   "sections": {
     "persona-voice": [
-      "You are James Bond — suave, confident, impossibly cool.",
-      "Dry wit is your weapon of choice.",
-      "Refer to your license to kill casually."
+      "You are calm, authoritative, and strategic.",
+      "You see the whole board.",
+      "Speak with the quiet confidence of someone who has already thought three steps ahead."
     ],
     "persona-strategy": [
-      "Greet everyone as though they walked into a high-stakes casino.",
-      "Keep it brief — a spy never says more than necessary."
+      "Always check the current state first — review all context before deciding next action.",
+      "First create research tasks to investigate unknowns, then create stories for actual work.",
+      "Think about dependencies — what needs to happen first, what can be parallelized."
     ]
   },
   "importantInstructions": [
-    "Introduce yourself as 'Bond. James Bond.' at least once per conversation"
+    "Never create stories based on assumptions — always research first",
+    "You orchestrate through the agent network — you never implement yourself"
   ],
-  "allowedTiers": ["TRIVIAL", "SIMPLE"],
+  "allowedTiers": ["STANDARD", "ADVANCED", "COMPLEX", "EXPERT"],
   "disabled": false
 }
 ```
+
+Two things to notice about how this persona interacts with its agent:
+
+- **The `importantInstructions` reinforce the agent's design.** `researcher-agent.json` already gives this agent no file-editing tools, so "you never implement yourself" is not enforcing a new rule — it is explaining to the model *why* it was given only delegation tools. Personas routinely do this: agent JSON sets the hard constraints; the persona tells the LLM how to behave within them.
+- **The persona's `allowedTiers` is narrower than the agent's.** The researcher agent allows everything from `SIMPLE` up through `EXPERT`. The `guru` persona restricts itself to `STANDARD`–`EXPERT` because this persona is intended for heavy planning work and should never be routed to a trivial-tier model. A different persona on the same agent (say, a `nick` persona for lightweight triage) could legitimately open up `SIMPLE` and `TRIVIAL` again. The effective set is the intersection of both lists.
 
 How the pieces feed into the prompt:
 
@@ -207,51 +215,63 @@ Each iteration persists the updated `AgentContext` to the context store before t
 
 Two different ways one agent can pull another into the conversation. Both go through the same message bus and contract system:
 
-**`delegate_to_agent`** — A asks B for help, keeps control.
+**`delegate_to_agent`** — the caller asks a peer for help and keeps control of the request.
+
+Example: `researcher:guru` is investigating "should we move our ingest pipeline from SQS to Kafka?" It needs a load-and-cost analysis from an architect before it can draft recommendations, so it delegates to `architect:sofia`:
 
 ```
-Requester ──► Agent A (iteration 1)
+User ─────► researcher:guru (iteration 1)
                  │
-                 └─► delegate_to_agent(target=B, message=...)
+                 └─► delegate_to_agent(
+                         target   = "architect:sofia",
+                         contract = "architecture-review",
+                         payload  = { question: "...pipeline migration..." })
                          │
-                         │  Engine creates a NEW AgentSessionId for B,
-                         │  same RequestId, parentSessionId=sess-A,
+                         │  Engine creates a NEW AgentSessionId for sofia,
+                         │  same RequestId, parentSessionId = sess-guru,
                          │  fresh empty AgentContext
                          │
-                         ├─► REQUEST envelope to B, replyTo=null
+                         ├─► REQUEST envelope to sofia, replyTo = null
                          │
-                         │       Agent B runs its own loop in sess-B
-                         │       produces a REPLY envelope back to A
+                         │       architect:sofia runs its own loop in
+                         │       sess-sofia, may itself delegate further,
+                         │       eventually produces a REPLY envelope
                          │
-                         ◄──── B's response
-              Agent A (iteration 2)
-                 │  ContextStore.load(sess-A) restores A's state
-                 │  B's reply is injected as a tool-result message
-                 └─► continues loop, eventually RESPOND
-Requester ◄── final reply from A
+                         ◄──── sofia's review: tradeoffs, cost estimate, risks
+              researcher:guru (iteration 2)
+                 │  ContextStore.load(sess-guru) restores guru's state
+                 │  sofia's reply is injected as a tool-result message
+                 └─► continues loop, writes final recommendation, RESPOND
+User ◄──────── final reply from researcher:guru
 ```
 
-A's loop **blocks** on B's reply via a `CompletableFuture` with timeout inside `InMemoryMessageBus`. A never sees B's `AgentContext`; it only receives the response payload.
+The researcher's loop **blocks** on sofia's reply via a `CompletableFuture` with timeout inside `InMemoryMessageBus`. Guru never sees sofia's `AgentContext` or internal reasoning; it only receives the contract output that sofia produced.
 
-**`handover_to_agent`** — A transfers the request entirely and exits.
+**`handover_to_agent`** — the caller transfers the request entirely and exits. The receiving agent's reply goes directly to the original requester.
+
+Example: the `root` dispatcher receives a chat turn and decides this is clearly a research task — there is no reason for root to stay in the loop and paraphrase the result. It hands the whole request over to `researcher:guru`:
 
 ```
-Requester ──► Agent A (iteration 1)
+User ─────► root:default (iteration 1)
                  │
-                 └─► handover_to_agent(target=B)
+                 └─► handover_to_agent(target = "researcher:guru")
                          │
-                         │  Engine creates NEW AgentSessionId for B,
-                         │  HANDOVER envelope with replyTo = original requester
+                         │  Engine creates NEW AgentSessionId for guru,
+                         │  HANDOVER envelope with replyTo = User
                          │
-              Agent A's loop TERMINATES here (terminal action)
+              root:default's loop TERMINATES here (terminal action)
                          │
-                         │       Agent B runs its loop in sess-B
+                         │       researcher:guru runs its loop in sess-guru,
+                         │       may delegate to architect / other workers,
+                         │       produces the final answer
                          │
                          ▼
-Requester ◄── B's reply goes directly to the original requester
+User ◄──────── researcher:guru's reply goes directly to the user
 ```
 
-The receiving agent doesn't need to know which mode was used — it always sends its reply to `envelope.effectiveReplyTo()`. The mode only affects who holds the pen when B finishes.
+The receiving agent doesn't need to know which mode was used — it always sends its reply to `envelope.effectiveReplyTo()`. The mode only affects who holds the pen when the downstream agent finishes.
+
+Rule of thumb: **delegate** when the caller still has work to do with the result. **Handover** when the caller was only routing and has nothing more to add.
 
 ### Session propagation
 
