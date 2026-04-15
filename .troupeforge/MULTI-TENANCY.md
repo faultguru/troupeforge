@@ -6,6 +6,14 @@
 
 ---
 
+## 0. Implementation Status
+
+The multi-org model in this document is implemented end-to-end in code. Every request carries an explicit `RequestContext`, agent sessions are isolated by `AgentSessionId`, and all bucket-scoped data goes through `AgentBucketId` (`OrganizationId + StageContext`).
+
+The **only** major gap is persistence: both `DocumentStore` and `ContextStore` are backed by `InMemoryDocumentStore` / `InMemoryContextStore` today. Sessions, agent state, and usage events do not survive a process restart. Config trees (agent / persona / contract / model JSON) **are** read from disk via `FilesystemOrgConfigSource`. The filesystem / DynamoDB layouts described below are still the intended targets for the storage layer — only the in-memory backends exist at present.
+
+---
+
 ## 1. Identity & Context Records (troupeforge-core)
 
 ### 1.1 Core Identity Records
@@ -242,7 +250,7 @@ interface ContextStore {
 }
 ```
 
-### 3.2 Filesystem Implementation
+### 3.2 Filesystem Implementation (planned — not yet shipped; see Section 0)
 
 ```java
 class FilesystemContextStore implements ContextStore {

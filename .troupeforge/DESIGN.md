@@ -19,6 +19,31 @@
 
 ---
 
+## 0. Implementation Status
+
+> This document is both design intent and a record of how the codebase currently looks. Where the code has diverged from the original intent, the sections below are updated inline and flagged with a **Status** callout. The canonical overview:
+>
+> **Implemented:**
+> - Core records and typed IDs (Section 1–2)
+> - Agent inheritance resolution and persona composition (Section 2)
+> - Contract-based async messaging via `InMemoryMessageBus` (Section 3)
+> - Anthropic LLM provider (`ClaudeLlmProvider`) with retry, OAuth + API key auth, and streaming (Section 4)
+> - In-memory `DocumentStore` and `ContextStore`; filesystem-backed `OrgConfigSource` for reading JSON config trees (Section 5)
+> - Agentic loop with delegate / handover / streaming variants (Section 7)
+> - Spring Boot app with REST controllers (`/api/chat`, `/api/chat/stream`, agents, sessions, status)
+> - Bucketed agent farms keyed by `AgentBucketId` (org + stage) — see MULTI-TENANCY.md
+>
+> **Not yet implemented / diverged:**
+> - No persistent storage backend — document and context stores are in-memory only. Sessions are lost on restart.
+> - Only the Anthropic provider exists; the `LlmProvider` SPI is ready but no OpenAI / Ollama implementations ship.
+> - Model tiers use a string-typed `TierId` record and a flat `List<TierId>` on the persona, not the `ComplexityTier` enum / `ModelAccessConfig` with `defaultTier`/`maxTier` described in early drafts.
+> - The agentic loop cap is **10** iterations in code (`AgentExecutorImpl.MAX_LOOP_ITERATIONS`), not 20.
+> - `DirectReturnPolicy` exists as a record but is not yet wired into the executor — every response is currently synthesized by the LLM.
+> - No Guava `AsyncEventBus`; `InMemoryMessageBus` is hand-rolled on `ConcurrentHashMap` + `CompletableFuture`. Redis / Kafka backends remain design-only.
+> - Tool catalog has shifted from the git/task-heavy set below to file / delegation / shell / reasoning / memory / web / calculator tools. See Section 6.4 for the shipped list.
+
+---
+
 ## 1. Module Structure
 
 5+1 modules. No over-modularization. Split by deployment boundary and substitutability.
@@ -291,9 +316,13 @@ record PersonaDefinition(
     Map<String, String> sections,         // fills agent-defined personaSections (key → content)
     List<String> additionalRules,         // genuinely additional rules (not personality)
     List<String> importantInstructions,   // injected as LAST prompt section (highest order)
-    ModelAccessConfig modelAccess,        // which tiers this persona can use + how to pick
+    List<TierId> allowedTiers,            // which model tiers this persona can use
     boolean disabled
 )
+
+// > **Status:** Implemented as `List<TierId>`. The `ModelAccessConfig` record with
+// > `defaultTier` / `maxTier` described in earlier drafts does not exist in the code;
+// > tier ceilings are not enforced at runtime today.
 
 record PersonaStyle(
     String tone,              // "warm, encouraging"
@@ -335,25 +364,24 @@ enum Verbosity { CONCISE, BALANCED, DETAILED }
 
 5. **`style`** — tone/verbosity metadata used for the auto-generated `persona-style` section.
 
-### 2.9 Model Access Config (on Persona)
+### 2.9 Model Access (on Persona)
 
-Model strategy lives on the persona — the persona is the final execution unit and decides which complexity tiers it has access to and how they're selected.
+Model strategy lives on the persona — the persona is the final execution unit and decides which tiers it has access to.
 
-The persona does NOT repeat model names/tokens/etc. It references the globally-defined tiers by name and optionally overrides the selection logic.
+The persona does NOT repeat model names/tokens/etc. It references globally-defined tiers by id.
 
 ```java
-enum ComplexityTier { TRIVIAL, SIMPLE, STANDARD, COMPLEX, EXPERT }
+record TierId(String value)  // "TRIVIAL", "SIMPLE", "STANDARD", "COMPLEX", "EXPERT" — or anything the org defines
 
-record ModelAccessConfig(
-    Set<ComplexityTier> allowedTiers,     // which tiers this persona can use
-    ComplexityTier defaultTier,           // used when complexity is unknown
-    ComplexityTier maxTier                // ceiling — never go above this
-)
+// on PersonaDefinition:
+List<TierId> allowedTiers;   // which tiers this persona can use
 ```
 
-The actual model-to-tier mapping (which model, maxTokens, temperature per tier) is defined **once** in the global `config/models/models.json`. Personas just say "I can use SIMPLE, STANDARD, COMPLEX" and "my ceiling is STANDARD."
+The actual model-to-tier mapping (which model, maxTokens, temperature per tier) is defined **once** in the global `config/models/models.json`. Personas just declare "I can use SIMPLE, STANDARD, COMPLEX."
 
-**Example:** A junior persona has `allowedTiers: [SIMPLE, STANDARD]`, `maxTier: STANDARD` — it can never use opus regardless of task complexity. A senior persona has `allowedTiers: [SIMPLE, STANDARD, COMPLEX, EXPERT]`, `maxTier: EXPERT`.
+**Example:** A junior persona has `allowedTiers: ["SIMPLE", "STANDARD"]` — it can never use an expert-tier model. A senior persona has `allowedTiers: ["SIMPLE", "STANDARD", "COMPLEX", "EXPERT"]`.
+
+> **Status:** Tiers are typed strings (`TierId`), not a fixed enum, so organizations can define their own tier names. The earlier design used a five-value `ComplexityTier` enum plus a `ModelAccessConfig` record with `defaultTier`/`maxTier` fields; those were dropped in favour of the simpler list-based model. Tier-ceiling enforcement is not yet implemented — `ComplexityAnalyzerImpl` picks a tier, and if that tier is in `allowedTiers` it is used; otherwise the resolver falls back to the persona's first allowed tier.
 
 ### 2.10 Agent Profile (final runtime object)
 
@@ -365,7 +393,7 @@ record AgentProfile(
     String effectiveDisplayName,
     String effectiveAvatar,
     List<PromptSection> effectivePromptSections,  // agent sections + persona style section
-    ModelAccessConfig modelAccess                  // from persona
+    List<TierId> allowedTiers                      // from persona
 )
 ```
 
@@ -572,21 +600,23 @@ interface ContractHandler<I extends Record, O extends Record> {
 }
 ```
 
-### 3.6 Guava EventBus Implementation
+### 3.6 In-Memory Implementation
 
 ```java
-class GuavaMessageBus implements MessageBus {
-    // AsyncEventBus with virtual thread executor
-    // Routing: Direct → agentHandlers map, ByContract → contractHandlers + AgentRegistry fallback
-    // TTL checking on dispatch
-    // PendingReplyStore for request/reply correlation
-    // DeadLetterHandler for undeliverable messages
+class InMemoryMessageBus implements MessageBus {
+    // ConcurrentHashMap<AgentProfileId, List<MessageHandler>> for Direct addressing
+    // ConcurrentHashMap<ContractRef, List<MessageHandler>>   for ByContract addressing
+    // CopyOnWriteArrayList per topic for Broadcast
+    // CompletableFuture<CorrelationId, MessageEnvelope<?>>   for request/reply correlation
+    // Synchronous send on the caller's thread; async where handlers return futures
 }
 ```
 
-**PendingReplyStore:** tracks `CorrelationId → CompletableFuture`, with timeout scheduling.
+Request/reply is correlated via a `CorrelationId → CompletableFuture` map inside the bus; timeouts are enforced with `CompletableFuture.orTimeout`.
 
-Pluggable: swap to Redis/Kafka by implementing `MessageBus` + setting `troupeforge.messaging.backend=redis`.
+The `MessageBus` interface is deliberately kept narrow so a future Redis/Kafka backend can drop in — but only `InMemoryMessageBus` ships today.
+
+> **Status:** The design originally called for `GuavaMessageBus` backed by `AsyncEventBus` and a virtual-thread executor. The shipping implementation is hand-rolled on `ConcurrentHashMap` to avoid a Guava dependency at the messaging layer. Dead-letter handling is currently a log statement.
 
 ### 3.7 Agent Registration
 
@@ -698,12 +728,14 @@ sealed interface LlmStreamEvent permits ContentDelta, ToolCallDelta, Complete, E
 ### 4.3 Client Stack
 
 ```
-ResilientLlmClient (retry + token tracking)
-    └── RoutingLlmClient (routes to provider by model name)
-            └── AnthropicProvider / OpenAIProvider / OllamaProvider / ...
+AgentExecutor
+    └── LlmProvider (resolved per request from ProviderConfigLoader)
+            └── ClaudeLlmProvider  (only implementation today)
 ```
 
-Retry is a decorator, not baked into each provider (improvement over lizzycode).
+Retry, backoff and streaming live inside `ClaudeLlmProvider`. A separate decorator-based retry layer was in the original plan but has not been factored out yet — the provider handles 429/5xx + `Retry-After` directly.
+
+> **Status:** Only `ClaudeLlmProvider` ships. The `LlmProvider` SPI is in place for OpenAI / Ollama / etc., but no additional providers exist yet.
 
 ### 4.4 Global Model Tier Definitions
 
@@ -813,17 +845,29 @@ interface DocumentStoreFactory {
 }
 ```
 
-### 5.2 Filesystem Implementation
+### 5.2 In-Memory Implementation
+
+```java
+class InMemoryDocumentStore<T extends Storable> implements DocumentStore<T> {
+    // ConcurrentHashMap<AgentBucketId, ConcurrentHashMap<String, StorageResult<T>>>
+    // Optimistic locking via version compare on put/delete
+    // In-memory query filtering with attribute-equals + sort
+}
+
+class InMemoryContextStore implements ContextStore {
+    // ConcurrentHashMap<AgentSessionId, AgentContext>
+    // Secondary index by RequestId for findByRequest(requestId) tracing lookups
+}
+```
+
+> **Status:** Only in-memory stores ship today — sessions and documents are **lost on restart**. The `FilesystemOrgConfigSource` does read agent / persona / contract / model JSON trees from disk, but document and context persistence is not yet implemented. The filesystem storage layout described below is still the intended target.
+
+**Planned filesystem layout** (not yet implemented):
 
 ```
-{dataDir}/{collection}/{id}.json      — entity data
-{dataDir}/{collection}/{id}.meta.json — version + lastModified
+{dataDir}/{bucketId}/{collection}/{id}.json      — entity data
+{dataDir}/{bucketId}/{collection}/{id}.meta.json — version + lastModified
 ```
-
-- `ReadWriteLock` for thread safety
-- In-memory query filtering (acceptable for dev/small deployments)
-- Auto-creates directories
-- Pluggable: swap via `troupeforge.storage.type=postgresql`
 
 ### 5.3 Improvements Over lizzycode
 
@@ -891,14 +935,17 @@ record AgentToolSet(List<ToolBinding> bindings) {
 
 ### 6.4 Available Tool Categories
 
-| Category | Tools |
-|---|---|
-| Delegation | `delegate_to_agent`, `handover_to_agent`, `list_agents` |
-| File | `read_file`, `write_file`, `edit_file`, `delete_file`, `list_files`, `batch_read` |
-| Git | `git_status`, `git_diff`, `git_log`, `git_commit` |
-| Search | `find_file`, `search`, `repo_index` |
-| Task | `create_task`, `get_task`, `query_tasks`, `add_comment` |
-| Shell | `shell_exec` |
+| Category | Tools | Module package |
+|---|---|---|
+| Delegation | `delegate_to_agent`, `handover_to_agent`, `list_agents` | `tools.delegation` |
+| File | `read_file`, `write_file`, `list_files`, `head_file`, `search_files` | `tools.file` |
+| Shell | `shell_exec` (`ShellCommandTool`) | `tools.system` |
+| Reasoning | `think` (`ThinkTool`) | `tools.reasoning` |
+| Memory | `memory` (`MemoryTool`) | `tools.memory` |
+| Utility | `calculator` | `tools.util` |
+| Web | `web_fetch` | `tools.web` |
+
+> **Status:** The git (`git_status`, `git_commit`, …), task-tracker (`create_task`, …), and search (`find_file`, `repo_index`) tools from earlier drafts have not been built. Input schemas for the shipping tools are derived from Java record definitions + `@ToolParam` annotations by `ToolSchemaGenerator` in `troupeforge-engine`.
 
 ### 6.5 Delegation Tools
 
@@ -925,7 +972,7 @@ Two delegation tools with fundamentally different control flow:
 
 ### 7.1 Loop Execution Model
 
-The agentic loop is how an agent processes a request. Max 20 iterations by default.
+The agentic loop is how an agent processes a request. The current cap in `AgentExecutorImpl.MAX_LOOP_ITERATIONS` is **10**. (Earlier drafts said 20; the cap was lowered after seeing how the shipped tools use iterations.) A `StreamingAgentExecutor` variant exists that emits the same actions over a Flux of stream events for SSE consumers.
 
 ```java
 enum LoopAction {
@@ -1084,7 +1131,7 @@ ContextStore.findByRequest(req-1) returns [sess-A, sess-B, sess-C] — full trac
 
 ## 8. Spring Boot Wiring
 
-### 7.1 Configuration via JSON
+### 8.1 Configuration via JSON
 
 All configuration is JSON. The main application config is `config/troupeforge.json`:
 
@@ -1114,23 +1161,37 @@ All configuration is JSON. The main application config is `config/troupeforge.js
 
 Spring Boot loads this via `@PropertySource` or a custom JSON config loader.
 
-### 7.2 Backend Swapping via Properties
+### 8.2 Backend Swapping (intended)
 
-Each infra implementation uses `@ConditionalOnProperty`:
-- `troupeforge.storage.type=filesystem` → `FilesystemDocumentStoreFactory`
-- `troupeforge.llm.anthropic.enabled=true` → `AnthropicProvider`
-- `troupeforge.messaging.backend=guava` → `GuavaMessageBus`
+The infra layer is designed so each backend can be swapped via config:
+- `troupeforge.storage.type=filesystem|postgres|...` → pluggable `DocumentStoreFactory`
+- `troupeforge.llm.<provider>.enabled=true` → pluggable `LlmProvider`
+- `troupeforge.messaging.backend=inmemory|redis|kafka` → pluggable `MessageBus`
 
-### 7.3 Auto-Configuration Classes
+Today only in-memory storage + messaging and the Claude LLM provider exist, so the conditional wiring is mostly a no-op — but the hooks are in place.
 
-- `LlmAutoConfiguration` — `ModelResolver`, `ModelSelectionService`, `RetryPolicy`, `LlmClient`
-- `AnthropicAutoConfiguration` — `AnthropicProvider`, `AnthropicCredentialResolver`
-- `StorageAutoConfiguration` — `DocumentStoreFactory`, `ContextStore`
-- `ToolAutoConfiguration` — `ToolRegistry`, `ToolExecutor`
-- `MessagingConfig` — `PendingReplyStore`, `MessageBus` (Guava default)
-- `EntryPointConfig` — `TroupeForgeEntryPoint`, `AgentSessionFactory`, `OrgLifecycleService`
+### 7.3 Spring Configuration Classes
 
-### 7.4 Virtual Threads
+- `TroupeForgeConfig` — wires loaders, executor, message bus, LLM provider, context store, entry point
+- `BucketAutoLoadConfig` — loads configured buckets at startup (`ApplicationRunner`)
+
+### 7.4 REST API
+
+The app exposes an HTTP API alongside the programmatic `TroupeForgeEntryPoint`:
+
+| Endpoint | Controller | Purpose |
+|---|---|---|
+| `POST /api/chat` | `ChatController` | Synchronous chat turn, returns `ChatResponse` (content + token usage + inference trace) |
+| `POST /api/chat/stream` | `StreamChatController` | Server-sent events stream of `StreamEvent`s for the same turn |
+| `GET /api/agents/**` | `AgentController` | List / inspect bucket agents and personas |
+| `GET /api/sessions/**` | `SessionController` | List sessions, fetch session transcript, resume |
+| `GET /api/status` | `StatusController` | Health + configured backends |
+
+A `RequestCorrelationFilter` populates SLF4J MDC with request / session / bucket ids for structured logging. A `GlobalExceptionHandler` maps engine errors onto REST error envelopes.
+
+> **Status:** The earlier draft said "no HTTP yet — programmatic entry point only." The HTTP layer shipped once the CLI client (`troupeforge-client`) needed it; it is thin and delegates straight to `TroupeForgeEntryPointImpl`.
+
+### 8.5 Virtual Threads
 
 Java 21 virtual threads used for:
 - Message bus async dispatch
@@ -1461,7 +1522,9 @@ Agent folders mirror the inheritance tree. Each agent folder contains:
 
 ## 10. Implementation Plan
 
-### Phase 1 — Foundation (troupeforge-core)
+Legend: ✅ shipped · 🟡 partial · ❌ not started
+
+### Phase 1 — Foundation (troupeforge-core) — ✅ shipped
 
 All records, interfaces, enums. Zero implementation logic.
 
@@ -1481,7 +1544,7 @@ All records, interfaces, enums. Zero implementation logic.
 14. Messaging interfaces: `MessageBus`, `MessageHandler`, `ContractHandler`, `ContractRegistry`, `AgentRegistry`
 15. Org interfaces: `OrgConfigSource`, `UsageTracker`
 
-### Phase 2 — Engine (troupeforge-engine)
+### Phase 2 — Engine (troupeforge-engine) — ✅ shipped (see drift notes above re: iteration cap, tier model)
 
 16. Agent farm: `AgentBucket`, `AgentBucketId`, `AgentBucketRegistry`, `AgentBucketLoader`
 17. Agent config loading: `AgentConfigLoader` (walks directory tree), `AgentInheritanceResolver`, `PersonaComposer`
@@ -1495,32 +1558,34 @@ All records, interfaces, enums. Zero implementation logic.
 25. AbstractContractAgent base class
 26. Bucket-aware LLM: `BucketAwareLlmClient`, `BucketRateLimiter`
 
-### Phase 3 — Infrastructure (troupeforge-infra)
+### Phase 3 — Infrastructure (troupeforge-infra) — 🟡 partial
 
-27. Filesystem store: `FilesystemDocumentStore`, `FilesystemDocumentStoreFactory`
-28. Context store: `FilesystemContextStore`
-29. Bucket-aware storage: `BucketAwareDocumentStoreFactory`, `FilesystemOrgConfigSource`
-30. Guava messaging: `GuavaMessageBus`, `BucketAwareMessageBus`, `PendingReplyStore`, `LoggingDeadLetterHandler`
-31. Anthropic provider: `AnthropicProvider`, `AnthropicCredentialResolver`, request mapping
-32. Spring auto-configurations
+27. ❌ Filesystem document store — replaced by `InMemoryDocumentStore` for now
+28. ❌ Filesystem context store — replaced by `InMemoryContextStore` for now
+29. 🟡 `FilesystemOrgConfigSource` ships (reads JSON config trees); bucket-aware `DocumentStoreFactory` is in-memory only
+30. 🟡 `InMemoryMessageBus` ships; Guava / Redis / Kafka backends not started
+31. ✅ `ClaudeLlmProvider` with OAuth + API key credential resolution
+32. ✅ Spring configuration in `troupeforge-app` (`TroupeForgeConfig`, `BucketAutoLoadConfig`)
 
-### Phase 4 — Tools (troupeforge-tools)
+### Phase 4 — Tools (troupeforge-tools) — 🟡 partial
 
-33. File tools: read, write, edit, delete, list, batch_read
-34. Git tools: status, diff, log, commit
-35. Search tools: find_file, search
-36. Dispatch tools: route_to_agent, handoff_to_dispatcher, list_agents
-37. Shell tool: shell_exec
-38. ToolRegistry, ToolExecutor, `BucketWorkspaceResolver`
+33. 🟡 File tools: `read_file`, `write_file`, `list_files`, `head_file`, `search_files` (no `edit_file`, `delete_file`, `batch_read`)
+34. ❌ Git tools — not started
+35. ❌ Task-tracker tools — not started
+36. ✅ Delegation tools: `delegate_to_agent`, `handover_to_agent`, `list_agents`
+37. ✅ Shell tool: `shell_exec`
+38. ✅ Think / memory / calculator / web_fetch tools (additions not originally planned)
+39. ✅ `ToolRegistry` + schema generation via record annotations (no `ToolExecutor` / `BucketWorkspaceResolver` indirection — the executor invokes tools directly)
 
-### Phase 5 — Application (troupeforge-app)
+### Phase 5 — Application (troupeforge-app) — ✅ shipped + extras
 
-39. Spring Boot main class + JSON config loading
-40. `TroupeForgeEntryPoint` + `DefaultTroupeForgeEntryPoint`
-41. `BucketLifecycleService` (onboard, reload, teardown)
-42. Startup runners (config validation)
+39. ✅ `TroupeForgeApplication` main class, JSON config loading
+40. ✅ `TroupeForgeEntryPointImpl` programmatic entry point
+41. ✅ `BucketLifecycleServiceImpl` onboard / reload / teardown
+42. ✅ `BucketAutoLoadConfig` startup runner
+43. ➕ REST API: `ChatController`, `StreamChatController`, `AgentController`, `SessionController`, `StatusController`, `RequestCorrelationFilter`, `GlobalExceptionHandler` — added after the original plan
 
-### Phase 6 — Test Config (troupeforge-testconfig)
+### Phase 6 — Test Config (troupeforge-testconfig) — ✅ shipped
 
 43. Sample agent config (root, coder, junior-coder, reviewer, dispatcher)
 44. Sample persona config (default, nate, charlie, jason, lily, jasmin, linda)

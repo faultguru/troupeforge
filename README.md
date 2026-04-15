@@ -48,10 +48,16 @@ troupeforge-client/troupeforge-chat.ps1   # PowerShell
 
 ## Documentation
 
-Design notes and architecture details live under [`.troupeforge/`](.troupeforge):
+User-facing guides live under [`docs/`](docs):
 
-- [DESIGN.md](.troupeforge/DESIGN.md) — full architecture
-- [MULTI-TENANCY.md](.troupeforge/MULTI-TENANCY.md) — tenancy model
+- [docs/getting-started.md](docs/getting-started.md) — build, configure, run, first chat request
+- [docs/modules.md](docs/modules.md) — what each Gradle module contains
+- [docs/contributing.md](docs/contributing.md) — conventions and how to add agents, personas, tools, providers
+
+Architecture design notes live under [`.troupeforge/`](.troupeforge):
+
+- [DESIGN.md](.troupeforge/DESIGN.md) — full architecture (with current implementation status inline)
+- [MULTI-TENANCY.md](.troupeforge/MULTI-TENANCY.md) — bucket / org / stage isolation model
 
 ## License
 
